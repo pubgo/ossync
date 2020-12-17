@@ -6,6 +6,5 @@ import (
 )
 
 func main() {
-	golug.Init()
 	golug.Run(rsync.GetEntry())
 }

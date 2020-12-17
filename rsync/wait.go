@@ -13,11 +13,14 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-func Range(min, max int) int {
+func getRange(min, max int) int {
 	return min + rand.Intn(max-min)
 }
 
-func NewWaiter() *Waiter {
+func newWaiter(max int) *Waiter {
+	if max < 0 {
+		max = 120
+	}
 	return &Waiter{
 		changed: make(map[string]*atomic.Bool),
 		skip:    make(map[string]*atomic.Uint32),
@@ -25,6 +28,7 @@ func NewWaiter() *Waiter {
 }
 
 type Waiter struct {
+	max     int
 	mu      sync.Mutex
 	changed map[string]*atomic.Bool
 	skip    map[string]*atomic.Uint32
@@ -63,7 +67,7 @@ func (t *Waiter) Skip(key string) bool {
 		return false
 	}
 
-	if t.skip[key].Load() > uint32(Range(5, 120)) {
+	if t.skip[key].Load() > uint32(getRange(5, t.max)) {
 		t.skip[key].Store(0)
 		xlog.Debugf("no skip: %s", key)
 		return false

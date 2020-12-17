@@ -65,10 +65,6 @@ func getCrc64Sum(path string) uint64 {
 	return c.Sum64()
 }
 
-func printStack() {
-	fmt.Println(xprocess.Stack())
-}
-
 // 本地文件加载
 // 本地存储中，如果已经同步了，那么就不用同步了
 //
