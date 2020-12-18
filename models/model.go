@@ -52,9 +52,18 @@ func pagination(page, perPage int) (int, int, int) {
 	return page, perPage, (page - 1) * perPage
 }
 
-func Random(db *xorm.Engine, n int, table string, data interface{}) (err error) {
+func Random(db *xorm.Engine, data interface{}, n int, table string) (err error) {
 	defer xerror.RespErr(&err)
 	return xerror.Wrap(db.SQL(
 		"select * from ? where id>=(select floor(rand() * (select max(id) from ?))) order by id limit ?", n, table, table,
 	).Find(data))
+}
+
+func Range(db *xorm.Session, data interface{}, page, perPage int, where string, a ...interface{}) (int64, error) {
+	var start int
+
+	sess := db.Where(where, a...)
+	_, perPage, start = pagination(page, perPage)
+	count := xerror.PanicErr(sess.Count()).(int64)
+	return count, xerror.Wrap(sess.Limit(perPage, start).Find(data))
 }

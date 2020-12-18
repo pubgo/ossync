@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/pubgo/ossync/db"
+	"github.com/pubgo/ossync/internal/ossync_db"
 	"github.com/pubgo/ossync/models"
 	"github.com/pubgo/xerror"
 )
@@ -15,7 +15,7 @@ func Create(view *fiber.Ctx) error {
 
 	xerror.Panic(view.BodyParser(&task))
 
-	xerror.Panic(models.TaskInsert(db.GetDb(), &task))
+	xerror.Panic(models.TaskInsert(ossync_db.GetDb(), &task))
 	return xerror.Wrap(view.JSON(fiber.Map{
 		"code": http.StatusOK,
 		"data": task,
@@ -29,7 +29,7 @@ func Delete(view *fiber.Ctx) error {
 func Update(view *fiber.Ctx) error {
 	var task map[string]interface{}
 	xerror.Panic(view.BodyParser(&task))
-	xerror.Panic(models.TaskPut(db.GetDb(), view.Params("id"), task))
+	xerror.Panic(models.TaskPut(ossync_db.GetDb(), view.Params("id"), task))
 	return xerror.Wrap(view.JSON(fiber.Map{
 		"code": http.StatusOK,
 	}))
@@ -38,7 +38,7 @@ func Update(view *fiber.Ctx) error {
 func Find(view *fiber.Ctx) error {
 	idP := view.Params("id")
 	id := xerror.PanicErr(strconv.Atoi(idP)).(int)
-	task, err := models.TaskGet(db.GetDb(), id)
+	task, err := models.TaskGet(ossync_db.GetDb(), id)
 	xerror.Panic(err)
 	return view.JSON(fiber.Map{
 		"code": http.StatusOK,
@@ -55,7 +55,7 @@ func List(view *fiber.Ctx) error {
 			rd = 10
 		}
 
-		tasks, err := models.TaskRandom(db.GetDb(), rd)
+		tasks, err := models.TaskRandom(ossync_db.GetDb(), rd)
 		xerror.Panic(err)
 		return view.JSON(fiber.Map{
 			"total": len(tasks),
@@ -74,7 +74,7 @@ func List(view *fiber.Ctx) error {
 
 	_ = id
 	page, perPage = models.Pagination(page, perPage)
-	tasks, total, err := models.TaskRange(db.GetDb(), status, page, perPage)
+	tasks, total, err := models.TaskRange(ossync_db.GetDb(), status, page, perPage)
 	xerror.Panic(err)
 
 	next, total := models.NextPage(int64(page), int64(perPage), total)

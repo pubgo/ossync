@@ -2,9 +2,9 @@ package main
 
 import (
 	"github.com/pubgo/golug"
-	"github.com/pubgo/ossync/rsync"
+	"github.com/pubgo/ossync/entry"
 )
 
 func main() {
-	golug.Run(rsync.GetEntry())
+	golug.Run(entry.GetEntry())
 }

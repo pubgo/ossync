@@ -1,7 +1,6 @@
 package rsync
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/base64"
@@ -11,15 +10,12 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
-	badger "github.com/dgraph-io/badger/v2"
-	jsoniter "github.com/json-iterator/go"
-	"github.com/pubgo/golug/golug_env"
-	"github.com/pubgo/golugin/pkg/golug_util"
+	"github.com/pubgo/golug/pkg/golug_utils"
+	"github.com/pubgo/ossync/models"
 	"github.com/pubgo/xerror"
 	"github.com/pubgo/xlog"
 	"github.com/pubgo/xprocess"
@@ -28,50 +24,24 @@ import (
 	"go.uber.org/atomic"
 )
 
-type SyncFile struct {
-	Crc64ecma uint64
-	Name      string
-	Path      string
-	Changed   bool
-	Synced    bool
-	Size      int64
-	Mode      os.FileMode
-	ModTime   int64
-	IsDir     bool
-}
-
-func getBytes(data interface{}) []byte {
-	dt, _ := jsoniter.Marshal(data)
-	return dt
-}
-
 func Hash(data []byte) (hash string) {
 	var h = murmur3.New64()
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func getCrc64Sum(path string) uint64 {
-	var n = time.Now()
-	defer func() {
-		fmt.Println(path, time.Since(n))
-	}()
-
+func getCrc64Sum(path string) string {
 	dt, err := ioutil.ReadFile(path)
 	xerror.Panic(err)
 
 	c := crc64.New(crc64.MakeTable(crc64.ECMA))
 	xerror.PanicErr(c.Write(dt))
-	return c.Sum64()
+	return fmt.Sprintf("%d", c.Sum64())
 }
 
 // 本地文件加载
 // 本地存储中，如果已经同步了，那么就不用同步了
-//
-
 var syncPrefix = "sync_files"
-var ext = "drawio"
-
 var delPrefix = "trash"
 var backupPrefix = "backup"
 
@@ -84,9 +54,9 @@ func Md5(path string) string {
 	return base64.StdEncoding.EncodeToString(c.Sum(nil))
 }
 
-func checkAndBackup(dir string, kk *oss.Bucket) {
+func CheckAndBackup(dir string, kk *oss.Bucket) {
 	var handle = func(path string) {
-		fmt.Println(path, "backup")
+		xlog.Infof("backup: %s", path)
 
 		var g = xprocess.NewGroup()
 		defer g.Wait()
@@ -140,34 +110,30 @@ func checkAndBackup(dir string, kk *oss.Bucket) {
 	}))
 }
 
-func checkAndSync(dir string, kk *oss.Bucket, db *badger.DB, ext string, c *atomic.Bool) {
-	if !golug_util.PathExist(dir) {
+func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
+	if !golug_utils.PathExist(dir) {
+		xlog.Warnf("path %s not found", dir)
 		return
 	}
 
-	fmt.Println("checking", dir)
-
-	var handle = func(ctx context.Context, sf SyncFile) {
+	xlog.Infof("checking %s", dir)
+	var handle = func(ctx context.Context, sf *models.SyncFile) {
 		key := filepath.Join(syncPrefix, sf.Path)
 
 		if !sf.Synced {
-			var ccc uint64
 			head, err := kk.GetObjectMeta(key)
 			if err != nil && !strings.Contains(err.Error(), "StatusCode=404") {
 				xerror.Panic(err)
 			}
 
+			var ccc string
 			if head != nil {
-				ccc, err = strconv.ParseUint(head.Get("X-Oss-Hash-Crc64ecma"), 10, 64)
-				xerror.Panic(err)
+				ccc = head.Get("X-Oss-Hash-Crc64ecma")
 			}
 
 			if ccc != sf.Crc64ecma {
 				xlog.Infof("sync: %s %s", key, sf.Path)
-				xerror.Exit(kk.PutObjectFromFile(
-					key, sf.Path,
-					oss.ContentMD5(Md5(sf.Path)),
-				))
+				xerror.Exit(kk.PutObjectFromFile(key, sf.Path, oss.ContentMD5(Md5(sf.Path))))
 			}
 			sf.Changed = true
 			sf.Synced = true
@@ -175,17 +141,17 @@ func checkAndSync(dir string, kk *oss.Bucket, db *badger.DB, ext string, c *atom
 
 		if sf.Changed {
 			c.Store(true)
-			xerror.Exit(db.Update(func(txn *badger.Txn) error {
-				sf.Changed = false
-				xlog.Infof("store: %s %s", key, sf.Path)
-				return xerror.Wrap(txn.Set([]byte(Hash([]byte(key))), getBytes(sf)))
-			}))
+			sf.Changed = false
+			xlog.Infof("store: %s %s", key, sf.Path)
+			models.SyncFileUpdate(sf, "path_hash=?", sf.PathHash)
 		}
 	}
 
 	var g = xprocess.NewGroup()
 	defer g.Wait()
-	xerror.Exit(filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	xerror.Exit(filepath.Walk(dir, func(path string, info os.FileInfo, err error) (gErr error) {
+		defer xerror.RespErr(&gErr)
+
 		if err != nil {
 			return err
 		}
@@ -203,103 +169,66 @@ func checkAndSync(dir string, kk *oss.Bucket, db *badger.DB, ext string, c *atom
 			return nil
 		}
 
-		if !strings.HasSuffix(info.Name(), ext) {
+		//if !strings.HasSuffix(info.Name(), ext) {
+		//	return nil
+		//}
+
+		pathHash := Hash([]byte(path))
+		sf := models.SyncFileFindOne("path_hash=?", pathHash)
+		if sf == nil || sf.Path == "" {
+			xlog.Debugf("ErrKeyNotFound: %s", path)
+			sf = &models.SyncFile{
+				Name:      info.Name(),
+				Size:      info.Size(),
+				Mode:      info.Mode(),
+				ModTime:   info.ModTime().Unix(),
+				IsDir:     info.IsDir(),
+				Synced:    false,
+				Changed:   true,
+				Path:      path,
+				PathHash:  pathHash,
+				Crc64ecma: getCrc64Sum(path),
+				Md5:       Md5(path),
+			}
+			models.SyncFileCreate(sf)
+
+			g.Go(func(ctx context.Context) { handle(ctx, sf) })
 			return nil
 		}
 
-		key := []byte(filepath.Join(syncPrefix, path))
-
-		return xerror.Wrap(db.View(func(txn *badger.Txn) error {
-			itm, err := txn.Get([]byte(Hash(key)))
-			if err == badger.ErrKeyNotFound {
-				fmt.Println("ErrKeyNotFound:", string(key))
-				g.Go(func(ctx context.Context) {
-					handle(ctx, SyncFile{
-						Name:      info.Name(),
-						Size:      info.Size(),
-						Mode:      info.Mode(),
-						ModTime:   info.ModTime().Unix(),
-						IsDir:     info.IsDir(),
-						Synced:    false,
-						Changed:   true,
-						Path:      path,
-						Crc64ecma: getCrc64Sum(path),
-					})
-				})
-				return nil
-			}
-
-			xerror.Panic(err)
-
-			xerror.Panic(itm.Value(func(_val []byte) error {
-				var sf SyncFile
-				xerror.Panic(jsoniter.Unmarshal(_val, &sf))
-				if sf.ModTime == info.ModTime().Unix() {
-					return nil
-				}
-
-				sf.Name = info.Name()
-				sf.Size = info.Size()
-				sf.Mode = info.Mode()
-				sf.ModTime = info.ModTime().Unix()
-				sf.IsDir = info.IsDir()
-				sf.Changed = true
-
-				if hash := getCrc64Sum(path); sf.Crc64ecma != hash {
-					sf.Synced = false
-					sf.Crc64ecma = hash
-				}
-
-				g.Go(func(ctx context.Context) { handle(ctx, sf) })
-				return nil
-			}))
+		if sf.ModTime == info.ModTime().Unix() {
 			return nil
-		}))
+		}
+
+		sf.Name = info.Name()
+		sf.Size = info.Size()
+		sf.Mode = info.Mode()
+		sf.ModTime = info.ModTime().Unix()
+		sf.IsDir = info.IsDir()
+		sf.Changed = true
+
+		if hash := getCrc64Sum(path); sf.Crc64ecma != hash {
+			sf.Synced = false
+			sf.Crc64ecma = hash
+		}
+
+		g.Go(func(ctx context.Context) { handle(ctx, sf) })
+		return nil
 	}))
 }
 
-func checkAndMove(kk *oss.Bucket, db *badger.DB, c *atomic.Bool) {
-	var handle = func(sf SyncFile) {
-		if golug_util.PathExist(sf.Path) {
+func CheckAndDelete(kk *oss.Bucket, c *atomic.Bool) {
+	models.SyncFileEach(func(sf models.SyncFile) {
+		if golug_utils.PathExist(sf.Path) {
 			return
 		}
 
 		c.Store(true)
 		xlog.Infof("delete:%s", sf.Path)
 
-		xerror.Panic(OssMove(kk, filepath.Join(syncPrefix, sf.Path), filepath.Join(delPrefix, sf.Path)))
-		xerror.Panic(db.Update(func(txn *badger.Txn) error { return xerror.Wrap(txn.Delete([]byte(sf.Name))) }))
-	}
-
-	g := xprocess.NewGroup()
-	defer g.Wait()
-	xerror.Exit(db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 10
-
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-
-			if !bytes.HasPrefix(item.Key(), []byte(syncPrefix)) {
-				continue
-			}
-
-			xerror.Panic(item.Value(func(v []byte) error {
-				var sf SyncFile
-				xerror.Panic(jsoniter.Unmarshal(v, &sf))
-				sf.Name = string(item.Key())
-				handle(sf)
-				//g.Go(func(ctx context.Context) { handle(sf) })
-				return nil
-			}))
-		}
-
-		return nil
-	}))
-
+		xerror.Panic(ossRemove(kk, filepath.Join(syncPrefix, sf.Path), filepath.Join(delPrefix, sf.Path)))
+		models.SyncFileDelete("path_hash=?", sf.PathHash)
+	})
 }
 
 func GetDbCmd() *cobra.Command {
@@ -310,56 +239,18 @@ func GetDbCmd() *cobra.Command {
 			prefix = args[0]
 		}
 
-		//var code = "true"
-		//if len(args) > 1 {
-		//	code = args[1]
-		//}
-
-		//program, err := expr.Compile(code, expr.Env(&SyncFile{}))
-		//xerror.Panic(err)
-
-		dbPath := filepath.Join(golug_env.Home, "db")
-		opts := badger.DefaultOptions(dbPath)
-		opts.WithLoggingLevel(badger.DEBUG)
-
-		db, err := badger.Open(opts)
-		xerror.Panic(err)
-		defer db.Close()
-
-		xerror.Exit(db.View(func(txn *badger.Txn) error {
-			opts := badger.DefaultIteratorOptions
-			opts.PrefetchSize = 10
-
-			it := txn.NewIterator(opts)
-			defer it.Close()
-
-			for it.Rewind(); it.Valid(); it.Next() {
-				item := it.Item()
-
-				if !bytes.HasPrefix(item.Key(), []byte(prefix)) {
-					continue
-				}
-
-				xerror.Panic(item.Value(func(v []byte) error {
-					var sf SyncFile
-					xerror.Panic(jsoniter.Unmarshal(v, &sf))
-					//output, err := expr.Run(program, &sf)
-					//xerror.Panic(err)
-					//if output.(bool) {
-					fmt.Println(string(item.Key()), string(v))
-					//}
-
-					return nil
-				}))
+		models.SyncFileEach(func(sf models.SyncFile) {
+			if !strings.HasPrefix(sf.Path, prefix) {
+				return
 			}
 
-			return nil
-		}))
+			fmt.Println(sf)
+		})
 	}
 	return cmd
 }
 
-func OssMove(k *oss.Bucket, srcObjectKey, destObjectKey string) error {
+func ossRemove(k *oss.Bucket, srcObjectKey, destObjectKey string) error {
 	xlog.Infof("copy: %s %s", srcObjectKey, destObjectKey)
 	_, err := k.CopyObject(srcObjectKey, destObjectKey)
 	if err != nil {
@@ -372,4 +263,19 @@ func OssMove(k *oss.Bucket, srcObjectKey, destObjectKey string) error {
 
 	xlog.Infof("delete: %s", srcObjectKey)
 	return xerror.Wrap(k.DeleteObject(srcObjectKey))
+}
+
+func init() {
+	//kk := golug_oss.GetClient()
+	//resp := xerror.PanicErr(kk.ListObjectsV2(oss.Prefix(syncPrefix))).(oss.ListObjectsResultV2)
+	//fmt.Println(resp.Prefix)
+	//fmt.Println(resp.XMLName)
+	//fmt.Println(resp.MaxKeys)
+	//fmt.Println(resp.MaxKeys)
+	//fmt.Println(resp.Delimiter)
+	//fmt.Println(resp.IsTruncated)
+	//fmt.Println(resp.CommonPrefixes)
+	//for _, k := range resp.Objects {
+	//	fmt.Printf("%#v\n", k)
+	//}
 }

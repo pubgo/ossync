@@ -17,11 +17,14 @@ func getRange(min, max int) int {
 	return min + rand.Intn(max-min)
 }
 
-func newWaiter(max int) *Waiter {
-	if max < 0 {
-		max = 120
+func NewWaiter(maxTimes ...int) *Waiter {
+	max := 120
+	if len(maxTimes) > 0 {
+		max = maxTimes[0]
 	}
+
 	return &Waiter{
+		max:     max,
 		changed: make(map[string]*atomic.Bool),
 		skip:    make(map[string]*atomic.Uint32),
 	}

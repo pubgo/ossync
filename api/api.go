@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/pubgo/ossync/api/file"
 	"github.com/pubgo/ossync/api/view"
 	"github.com/pubgo/xerror"
 )
@@ -20,4 +21,7 @@ func Router(r fiber.Router) {
 	})
 
 	view.InitRouter(r.Group("/"))
+
+	api := r.Group("/api")
+	file.InitRouter(api)
 }
