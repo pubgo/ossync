@@ -7,7 +7,8 @@ require (
 	github.com/gofiber/fiber/v2 v2.2.3
 	github.com/hashicorp/go-version v1.2.1
 	github.com/pubgo/dix v0.1.6
-	github.com/pubgo/golug v0.0.7-0.20201218181035-d077813e5630
+	github.com/pubgo/golug v0.0.7-0.20201220061143-d294a0547cbd
+	github.com/pubgo/golugin v0.0.0-20201220061013-fa9678b1bf83
 	github.com/pubgo/xerror v0.3.4
 	github.com/pubgo/xlog v0.0.10
 	github.com/pubgo/xprocess v0.0.11
