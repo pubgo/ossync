@@ -19,15 +19,12 @@ import (
 )
 
 func GetEntry() golug_entry.Entry {
-	ent := golug.NewRestEntry(name,&cfg)
+	ent := golug.NewRestEntry(name, &cfg)
 	ent.Version(version.Version)
 	ent.Description("sync from local to remote")
 	ent.Commands(rsync.GetDbCmd())
 	ent.Router(api.Router)
-	golug.WithBeforeStart(func(ctx *dix_run.BeforeStartCtx) {
-		ossync_db.InitDb(cfg.Db)
-		ossync_oss.InitBucket(cfg.Oss)
-
+	golug.WithAfterStart(func(ctx *dix_run.AfterStartCtx) {
 		db := ossync_db.GetDb()
 		_ = db.Sync2(
 			new(models.SyncFile),
@@ -56,6 +53,10 @@ func GetEntry() golug_entry.Entry {
 		for i := range cfg.Files {
 			run(cfg.Files[i])
 		}
+	})
+	golug.WithBeforeStart(func(ctx *dix_run.BeforeStartCtx) {
+		ossync_db.InitDb(cfg.Db)
+		ossync_oss.InitBucket(cfg.Oss)
 	})
 
 	return ent
