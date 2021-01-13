@@ -25,12 +25,12 @@ func GetEntry() golug_entry.Entry {
 	ent.Commands(rsync.GetDbCmd())
 	ent.Router(api.Router)
 
-	golug.WithBeforeStart(func(ctx *dix_run.BeforeStartCtx) {
+	golug.BeforeStart(func(ctx *dix_run.BeforeStartCtx) {
 		ossync_db.InitDb(cfg.Db)
 		ossync_oss.InitBucket(cfg.Oss)
 	})
 
-	golug.WithAfterStart(func(ctx *dix_run.AfterStartCtx) {
+	golug.AfterStart(func(ctx *dix_run.AfterStartCtx) {
 		db := ossync_db.GetDb()
 		_ = db.Sync2(
 			new(models.SyncFile),
@@ -40,10 +40,10 @@ func GetEntry() golug_entry.Entry {
 		var run = func(path string) {
 			key := os.ExpandEnv(path)
 			bucket := ossync_oss.GetBucket()
-			cancel := xprocess.GoLoop(func(ctx context.Context) error {
+			cancel := xprocess.GoLoop(func(ctx context.Context) {
 				if waiter.Skip(key) {
 					time.Sleep(5 * time.Second)
-					return nil
+					return
 				}
 
 				var c = atomic.NewBool(false)
@@ -51,9 +51,9 @@ func GetEntry() golug_entry.Entry {
 				rsync.CheckAndSync(key, bucket, c)
 				rsync.CheckAndDelete(bucket, c)
 				rsync.CheckAndBackup(key, bucket)
-				return nil
+				return
 			})
-			golug.WithAfterStop(func(ctx *dix_run.AfterStopCtx) { cancel() })
+			golug.AfterStop(func(ctx *dix_run.AfterStopCtx) { cancel() })
 		}
 
 		for i := range cfg.Files {

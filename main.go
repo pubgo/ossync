@@ -6,5 +6,7 @@ import (
 )
 
 func main() {
+	golug.Init()
+	
 	golug.Run(entry.GetEntry())
 }
