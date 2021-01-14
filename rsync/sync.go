@@ -77,6 +77,10 @@ func CheckAndBackup(dir string, kk *oss.Bucket) {
 				return nil
 			}
 
+			if strings.HasSuffix(info.Name(), ".crdownload") {
+				return nil
+			}
+
 			key := filepath.Join(backupPrefix, path)
 			xlog.Infof("backup: %s", path)
 			g.Go(func(ctx context.Context) {
