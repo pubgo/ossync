@@ -1,7 +1,6 @@
 package rsync
 
 import (
-	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
@@ -19,6 +18,7 @@ import (
 	"github.com/pubgo/xerror"
 	"github.com/pubgo/xlog"
 	"github.com/pubgo/xprocess"
+	"github.com/pubgo/xprocess/xprocess_abc"
 	"github.com/spf13/cobra"
 	"github.com/twmb/murmur3"
 	"go.uber.org/atomic"
@@ -55,11 +55,32 @@ func Md5(path string) string {
 }
 
 func CheckAndBackup(dir string, kk *oss.Bucket) {
-	var handle = func(path string) {
+	var getFiles = xprocess.Promise(func(g xprocess_abc.Future) {
+		xerror.Exit(filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			if !info.IsDir() {
+				return nil
+			}
+
+			if info.Name()[0] == '.' {
+				return filepath.SkipDir
+			}
+
+			if info.Name() == backupPrefix {
+				g.Yield(path)
+				return filepath.SkipDir
+			}
+
+			return nil
+		}))
+	})
+
+	getFiles.Map(func(path string) {
 		xlog.Infof("backup: %s", path)
 
-		var g = xprocess.NewGroup()
-		defer g.Wait()
 		xerror.Exit(filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -83,35 +104,12 @@ func CheckAndBackup(dir string, kk *oss.Bucket) {
 
 			key := filepath.Join(backupPrefix, path)
 			xlog.Infof("backup: %s", path)
-			g.Go(func(ctx context.Context) {
-				xerror.Panic(kk.PutObjectFromFile(key, path, oss.ContentMD5(Md5(path))))
-				time.AfterFunc(time.Second*5, func() { _ = os.Remove(path) })
-			})
+			xerror.Panic(kk.PutObjectFromFile(key, path, oss.ContentMD5(Md5(path))))
+			time.AfterFunc(time.Second*5, func() { _ = os.Remove(path) })
 
 			return nil
 		}))
-	}
-
-	xerror.Exit(filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !info.IsDir() {
-			return nil
-		}
-
-		if info.Name()[0] == '.' {
-			return filepath.SkipDir
-		}
-
-		if info.Name() == backupPrefix {
-			handle(path)
-			return filepath.SkipDir
-		}
-
-		return nil
-	}))
+	})
 }
 
 func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
@@ -121,7 +119,78 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 	}
 
 	xlog.Infof("checking %s", dir)
-	var handle = func(ctx context.Context, sf *models.SyncFile) {
+
+	var getFiles = xprocess.Promise(func(g xprocess_abc.Future) {
+		xerror.Exit(filepath.Walk(dir, func(path string, info os.FileInfo, err error) (gErr error) {
+			defer xerror.RespErr(&gErr)
+
+			if err != nil {
+				return err
+			}
+
+			if info.IsDir() {
+				if info.Name()[0] == '.' || info.Name() == backupPrefix {
+					return filepath.SkipDir
+				}
+
+				return nil
+			}
+
+			// 隐藏文件
+			if info.Name()[0] == '.' {
+				return nil
+			}
+
+			if strings.HasSuffix(info.Name(), ".crdownload") {
+				return nil
+			}
+
+			pathHash := Hash([]byte(path))
+			val := xprocess.Async(models.SyncFileFindOne, "path_hash=?", pathHash)
+			g.YieldFn(val, func(sf *models.SyncFile) *models.SyncFile {
+				if sf == nil || sf.Path == "" {
+					xlog.Debugf("ErrKeyNotFound: %s", path)
+					sf = &models.SyncFile{
+						Name:      info.Name(),
+						Size:      info.Size(),
+						Mode:      info.Mode(),
+						ModTime:   info.ModTime().Unix(),
+						IsDir:     info.IsDir(),
+						Synced:    false,
+						Changed:   true,
+						Path:      path,
+						PathHash:  pathHash,
+						Crc64ecma: getCrc64Sum(path),
+						Md5:       Md5(path),
+					}
+					models.SyncFileCreate(sf)
+					return sf
+				}
+
+				if sf.ModTime == info.ModTime().Unix() {
+					return nil
+				}
+
+				sf.Name = info.Name()
+				sf.Size = info.Size()
+				sf.Mode = info.Mode()
+				sf.ModTime = info.ModTime().Unix()
+				sf.IsDir = info.IsDir()
+				sf.Changed = true
+
+				if hash := getCrc64Sum(path); sf.Crc64ecma != hash {
+					sf.Synced = false
+					sf.Crc64ecma = hash
+				}
+
+				return sf
+			})
+
+			return nil
+		}))
+	})
+
+	getFiles.Map(func(sf *models.SyncFile) {
 		key := filepath.Join(syncPrefix, sf.Path)
 
 		if !sf.Synced {
@@ -149,76 +218,7 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 			xlog.Infof("store: %s %s", key, sf.Path)
 			models.SyncFileUpdate(sf, "path_hash=?", sf.PathHash)
 		}
-	}
-
-	var g = xprocess.NewGroup()
-	defer g.Wait()
-	xerror.Exit(filepath.Walk(dir, func(path string, info os.FileInfo, err error) (gErr error) {
-		defer xerror.RespErr(&gErr)
-
-		if err != nil {
-			return err
-		}
-
-		if info.IsDir() {
-			if info.Name()[0] == '.' || info.Name() == backupPrefix {
-				return filepath.SkipDir
-			}
-
-			return nil
-		}
-
-		// 隐藏文件
-		if info.Name()[0] == '.' {
-			return nil
-		}
-
-		//if !strings.HasSuffix(info.Name(), ext) {
-		//	return nil
-		//}
-
-		pathHash := Hash([]byte(path))
-		sf := models.SyncFileFindOne("path_hash=?", pathHash)
-		if sf == nil || sf.Path == "" {
-			xlog.Debugf("ErrKeyNotFound: %s", path)
-			sf = &models.SyncFile{
-				Name:      info.Name(),
-				Size:      info.Size(),
-				Mode:      info.Mode(),
-				ModTime:   info.ModTime().Unix(),
-				IsDir:     info.IsDir(),
-				Synced:    false,
-				Changed:   true,
-				Path:      path,
-				PathHash:  pathHash,
-				Crc64ecma: getCrc64Sum(path),
-				Md5:       Md5(path),
-			}
-			models.SyncFileCreate(sf)
-
-			g.Go(func(ctx context.Context) { handle(ctx, sf) })
-			return nil
-		}
-
-		if sf.ModTime == info.ModTime().Unix() {
-			return nil
-		}
-
-		sf.Name = info.Name()
-		sf.Size = info.Size()
-		sf.Mode = info.Mode()
-		sf.ModTime = info.ModTime().Unix()
-		sf.IsDir = info.IsDir()
-		sf.Changed = true
-
-		if hash := getCrc64Sum(path); sf.Crc64ecma != hash {
-			sf.Synced = false
-			sf.Crc64ecma = hash
-		}
-
-		g.Go(func(ctx context.Context) { handle(ctx, sf) })
-		return nil
-	}))
+	})
 }
 
 func CheckAndDelete(kk *oss.Bucket, c *atomic.Bool) {

@@ -2,7 +2,7 @@ package ossync_oss
 
 import (
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
-	"github.com/pubgo/golugin/golug_oss"
+	"github.com/pubgo/golugin/client/golug_oss"
 )
 
 var client *oss.Bucket

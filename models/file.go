@@ -27,7 +27,7 @@ type SyncFile struct {
 
 func SyncFileCreate(sf *SyncFile) {
 	_, err := ossync_db.GetDb().InsertOne(sf)
-	xerror.Next().Panic(err)
+	xerror.Panic(err)
 }
 
 func SyncFileFindOne(where string, a ...interface{}) *SyncFile {
@@ -38,7 +38,7 @@ func SyncFileFindOne(where string, a ...interface{}) *SyncFile {
 		return nil
 	}
 
-	xerror.Next().Panic(err)
+	xerror.Panic(err)
 	return sf
 }
 
@@ -49,7 +49,7 @@ func SyncFileUpdate(sf *SyncFile, where string, a ...interface{}) {
 		return
 	}
 
-	xerror.Next().Panic(err)
+	xerror.Panic(err)
 	return
 }
 
@@ -60,7 +60,7 @@ func SyncFileUpdateMap(sf map[string]interface{}, where string, a ...interface{}
 		return
 	}
 
-	xerror.Next().Panic(err)
+	xerror.Panic(err)
 	return
 }
 
@@ -70,7 +70,7 @@ func SyncFileDelete(where string, a ...interface{}) {
 	if err == xorm.ErrNotExist {
 		return
 	}
-	xerror.Next().Panic(err)
+	xerror.Panic(err)
 	return
 }
 
@@ -90,7 +90,7 @@ func SyncFileEach(fn func(sf SyncFile)) {
 	for i := 1; ; i++ {
 		var sfList []SyncFile
 		_, perPage, start := pagination(i, 20)
-		xerror.Next().Panic(tb.Where("id>=?", id).Limit(perPage, start).Find(&sfList))
+		xerror.Panic(tb.Where("id>=?", id).Limit(perPage, start).Find(&sfList))
 		if len(sfList) == 0 {
 			break
 		}

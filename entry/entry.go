@@ -19,7 +19,8 @@ import (
 )
 
 func GetEntry() golug_entry.Entry {
-	ent := golug.NewRestEntry(name, &cfg)
+	ent := golug.NewRestEntry(name)
+	ent.OnCfg(&cfg)
 	ent.Version(version.Version)
 	ent.Description("sync from local to remote")
 	ent.Commands(rsync.GetDbCmd())

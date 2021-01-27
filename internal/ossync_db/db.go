@@ -8,4 +8,4 @@ import (
 var db *xorm.Engine
 
 func GetDb() *xorm.Engine { return db }
-func InitDb(name string)  { db = golug_db.GetClient(name) }
+func InitDb(name string)  { db = golug_db.Get(name) }
