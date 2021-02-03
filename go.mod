@@ -8,11 +8,11 @@ require (
 	github.com/google/gops v0.3.14
 	github.com/pelletier/go-toml v1.8.1 // indirect
 	github.com/pubgo/dix v0.1.13
-	github.com/pubgo/golug v0.0.8
+	github.com/pubgo/golug v0.0.9-0.20210203031755-9e5bc017dfce
 	github.com/pubgo/golugin v0.0.2-0.20210126123545-71f2626902d8
-	github.com/pubgo/xerror v0.3.24
-	github.com/pubgo/xlog v0.0.10
-	github.com/pubgo/xprocess v0.1.7
+	github.com/pubgo/xerror v0.3.25
+	github.com/pubgo/xlog v0.0.16
+	github.com/pubgo/xprocess v0.1.11
 	github.com/spf13/cobra v1.1.1
 	github.com/twmb/murmur3 v1.1.5
 	go.uber.org/atomic v1.7.0

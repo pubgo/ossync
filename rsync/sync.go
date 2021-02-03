@@ -191,6 +191,10 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 	})
 
 	getFiles.Map(func(sf *models.SyncFile) {
+		if sf == nil {
+			return
+		}
+
 		key := filepath.Join(syncPrefix, sf.Path)
 
 		if !sf.Synced {
@@ -218,7 +222,8 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 			xlog.Infof("store: %s %s", key, sf.Path)
 			models.SyncFileUpdate(sf, "path_hash=?", sf.PathHash)
 		}
-	})
+
+	}).Assert("error")
 }
 
 func CheckAndDelete(kk *oss.Bucket, c *atomic.Bool) {
