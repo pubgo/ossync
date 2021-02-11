@@ -5,10 +5,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/pubgo/dix/dix_run"
 	"github.com/pubgo/golug"
 	"github.com/pubgo/golug/golug_entry"
-	"github.com/pubgo/ossync/api"
 	"github.com/pubgo/ossync/internal/ossync_db"
 	"github.com/pubgo/ossync/internal/ossync_oss"
 	"github.com/pubgo/ossync/models"
@@ -19,12 +17,11 @@ import (
 )
 
 func GetEntry() golug_entry.Entry {
-	ent := golug.NewRestEntry(name)
+	ent := golug.NewTaskEntry(name)
 	ent.OnCfg(&cfg)
 	ent.Version(version.Version)
 	ent.Description("sync from local to remote")
 	ent.Commands(rsync.GetDbCmd())
-	ent.Router(api.Router)
 
 	golug.BeforeStart(func(ctx *dix_run.BeforeStartCtx) {
 		ossync_db.InitDb(cfg.Db)
@@ -41,6 +38,7 @@ func GetEntry() golug_entry.Entry {
 		var run = func(path string) {
 			key := os.ExpandEnv(path)
 			bucket := ossync_oss.GetBucket()
+
 			cancel := xprocess.GoLoop(func(ctx context.Context) {
 				if waiter.Skip(key) {
 					time.Sleep(5 * time.Second)

@@ -3,7 +3,6 @@ package version
 import (
 	"runtime"
 
-	"github.com/pubgo/dix/dix_trace"
 	"github.com/pubgo/golug/golug_version"
 )
 
