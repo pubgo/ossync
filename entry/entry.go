@@ -2,9 +2,6 @@ package entry
 
 import (
 	"context"
-	"os"
-	"time"
-
 	"github.com/pubgo/golug"
 	"github.com/pubgo/golug/golug_entry"
 	"github.com/pubgo/ossync/internal/ossync_db"
@@ -14,21 +11,23 @@ import (
 	"github.com/pubgo/ossync/version"
 	"github.com/pubgo/xprocess"
 	"go.uber.org/atomic"
+	"os"
+	"time"
 )
 
 func GetEntry() golug_entry.Entry {
-	ent := golug.NewTaskEntry(name)
+	ent := golug.NewCtl(name)
 	ent.OnCfg(&cfg)
 	ent.Version(version.Version)
 	ent.Description("sync from local to remote")
 	ent.Commands(rsync.GetDbCmd())
 
-	golug.BeforeStart(func(ctx *dix_run.BeforeStartCtx) {
+	ent.BeforeStart(func() {
 		ossync_db.InitDb(cfg.Db)
 		ossync_oss.InitBucket(cfg.Oss)
 	})
 
-	golug.AfterStart(func(ctx *dix_run.AfterStartCtx) {
+	ent.Register(func() {
 		db := ossync_db.GetDb()
 		_ = db.Sync2(
 			new(models.SyncFile),
@@ -52,12 +51,14 @@ func GetEntry() golug_entry.Entry {
 				rsync.CheckAndBackup(key, bucket)
 				return
 			})
-			golug.AfterStop(func(ctx *dix_run.AfterStopCtx) { cancel() })
+			golug.AfterStop(func() { cancel() })
 		}
 
 		for i := range cfg.Files {
 			run(cfg.Files[i])
 		}
+
+		select {}
 	})
 
 	return ent

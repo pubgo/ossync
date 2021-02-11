@@ -1,13 +1,14 @@
 package main
 
 import (
+	"net"
+	"net/http"
+	_ "net/http/pprof"
+
 	"github.com/google/gops/agent"
 	"github.com/pubgo/golug"
 	"github.com/pubgo/ossync/entry"
 	"github.com/pubgo/xerror"
-	"net"
-	"net/http"
-	_ "net/http/pprof"
 )
 
 func main() {
