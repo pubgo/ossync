@@ -3,29 +3,25 @@ package entry
 import (
 	"context"
 	"github.com/pubgo/golug"
-	"github.com/pubgo/golug/golug_entry"
+	"github.com/pubgo/golug/entry"
 	"github.com/pubgo/ossync/internal/ossync_db"
 	"github.com/pubgo/ossync/internal/ossync_oss"
 	"github.com/pubgo/ossync/models"
 	"github.com/pubgo/ossync/rsync"
 	"github.com/pubgo/ossync/version"
-	"github.com/pubgo/xprocess"
+	"github.com/pubgo/x/fx"
+	"github.com/pubgo/xerror"
 	"go.uber.org/atomic"
 	"os"
 	"time"
 )
 
-func GetEntry() golug_entry.Entry {
+func GetEntry() entry.Entry {
 	ent := golug.NewCtl(name)
 	ent.OnCfg(&cfg)
 	ent.Version(version.Version)
 	ent.Description("sync from local to remote")
 	ent.Commands(rsync.GetDbCmd())
-
-	ent.BeforeStart(func() {
-		ossync_db.InitDb(cfg.Db)
-		ossync_oss.InitBucket(cfg.Oss)
-	})
 
 	ent.Register(func() {
 		db := ossync_db.GetDb()
@@ -38,7 +34,9 @@ func GetEntry() golug_entry.Entry {
 			key := os.ExpandEnv(path)
 			bucket := ossync_oss.GetBucket()
 
-			cancel := xprocess.GoLoop(func(ctx context.Context) {
+			cancel := fx.GoLoop(func(ctx context.Context) {
+				defer xerror.RespExit()
+
 				if waiter.Skip(key) {
 					time.Sleep(5 * time.Second)
 					return

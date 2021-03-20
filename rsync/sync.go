@@ -1,6 +1,7 @@
 package rsync
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
@@ -13,12 +14,13 @@ import (
 	"time"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
-	"github.com/pubgo/golug/pkg/golug_utils"
 	"github.com/pubgo/ossync/models"
+	"github.com/pubgo/x/abc"
+	"github.com/pubgo/x/future"
+	"github.com/pubgo/x/pathutil"
 	"github.com/pubgo/xerror"
 	"github.com/pubgo/xlog"
-	"github.com/pubgo/xprocess"
-	"github.com/pubgo/xprocess/xprocess_abc"
+	"github.com/reactivex/rxgo/v2"
 	"github.com/spf13/cobra"
 	"github.com/twmb/murmur3"
 	"go.uber.org/atomic"
@@ -55,7 +57,7 @@ func Md5(path string) string {
 }
 
 func CheckAndBackup(dir string, kk *oss.Bucket) {
-	var getFiles = xprocess.Promise(func(g xprocess_abc.Future) {
+	var observable = future.Promise(func(_ context.Context, next chan<- rxgo.Item) {
 		xerror.Exit(filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -69,8 +71,8 @@ func CheckAndBackup(dir string, kk *oss.Bucket) {
 				return filepath.SkipDir
 			}
 
-			if info.Name() == backupPrefix {
-				g.Yield(path)
+			if strings.HasPrefix(info.Name(), backupPrefix) {
+				next <- rxgo.Of(path)
 				return filepath.SkipDir
 			}
 
@@ -78,7 +80,13 @@ func CheckAndBackup(dir string, kk *oss.Bucket) {
 		}))
 	})
 
-	getFiles.Map(func(path string) {
+	for item := range observable.Observe() {
+		if item.Error() {
+			xlog.Error("item error", xlog.Any("err", item.E))
+			continue
+		}
+
+		path := item.V.(string)
 		xlog.Infof("backup: %s", path)
 
 		xerror.Exit(filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
@@ -87,7 +95,7 @@ func CheckAndBackup(dir string, kk *oss.Bucket) {
 			}
 
 			if info.IsDir() {
-				if info.Name()[0] == '.' {
+				if info.Name()[0] == '.' || info.Name() == backupPrefix {
 					return filepath.SkipDir
 				}
 				return nil
@@ -98,9 +106,7 @@ func CheckAndBackup(dir string, kk *oss.Bucket) {
 				return nil
 			}
 
-			if strings.HasSuffix(info.Name(), ".crdownload") {
-				return nil
-			}
+			fmt.Println(info.Name())
 
 			key := filepath.Join(backupPrefix, path)
 			xlog.Infof("backup: %s", path)
@@ -109,18 +115,17 @@ func CheckAndBackup(dir string, kk *oss.Bucket) {
 
 			return nil
 		}))
-	})
+	}
 }
 
 func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
-	if !golug_utils.PathExist(dir) {
+	if pathutil.IsNotExist(dir) {
 		xlog.Warnf("path %s not found", dir)
 		return
 	}
 
 	xlog.Infof("checking %s", dir)
-
-	var getFiles = xprocess.Promise(func(g xprocess_abc.Future) {
+	var observable = future.Promise(func(_ context.Context, next chan<- rxgo.Item) {
 		xerror.Exit(filepath.Walk(dir, func(path string, info os.FileInfo, err error) (gErr error) {
 			defer xerror.RespErr(&gErr)
 
@@ -141,13 +146,9 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 				return nil
 			}
 
-			if strings.HasSuffix(info.Name(), ".crdownload") {
-				return nil
-			}
-
 			pathHash := Hash([]byte(path))
-			val := xprocess.Async(models.SyncFileFindOne, "path_hash=?", pathHash)
-			g.YieldFn(val, func(sf *models.SyncFile) *models.SyncFile {
+			val := future.Async(models.SyncFileFindOne, "path_hash=?", pathHash)
+			next <- rxgo.Of(future.APipe(val, func(sf *models.SyncFile) *models.SyncFile {
 				if sf == nil || sf.Path == "" {
 					xlog.Debugf("ErrKeyNotFound: %s", path)
 					sf = &models.SyncFile{
@@ -184,15 +185,35 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 				}
 
 				return sf
-			})
+			}))
 
 			return nil
 		}))
 	})
 
-	getFiles.Map(func(sf *models.SyncFile) {
+	for item := range observable.Observe() {
+		if item.Error() {
+			xlog.Error("item error", xlog.Any("err", item.E))
+			continue
+		}
+
+		if item.V == nil {
+			continue
+		}
+
+		var sf *models.SyncFile
+		switch v := item.V.(type) {
+		case *models.SyncFile:
+			sf = v
+		default:
+			xerror.Panic(v.(abc.FutureValue).Value(func(v *models.SyncFile) {
+				sf = v
+			}))
+		}
+
 		if sf == nil {
-			return
+			fmt.Printf("%#v\n", item)
+			continue
 		}
 
 		key := filepath.Join(syncPrefix, sf.Path)
@@ -200,7 +221,7 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 		if !sf.Synced {
 			head, err := kk.GetObjectMeta(key)
 			if err != nil && !strings.Contains(err.Error(), "StatusCode=404") {
-				xerror.Panic(err)
+				xerror.Exit(err)
 			}
 
 			var ccc string
@@ -222,13 +243,12 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 			xlog.Infof("store: %s %s", key, sf.Path)
 			models.SyncFileUpdate(sf, "path_hash=?", sf.PathHash)
 		}
-
-	}).Assert("error")
+	}
 }
 
 func CheckAndDelete(kk *oss.Bucket, c *atomic.Bool) {
 	models.SyncFileEach(func(sf models.SyncFile) {
-		if golug_utils.PathExist(sf.Path) {
+		if pathutil.IsExist(sf.Path) {
 			return
 		}
 
