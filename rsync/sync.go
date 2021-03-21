@@ -212,7 +212,6 @@ func CheckAndSync(dir string, kk *oss.Bucket, c *atomic.Bool) {
 		}
 
 		if sf == nil {
-			fmt.Printf("%#v\n", item)
 			continue
 		}
 

@@ -4,7 +4,7 @@ go 1.14
 
 require (
 	github.com/aliyun/aliyun-oss-go-sdk v2.1.5+incompatible
-	github.com/pubgo/golug v0.0.16
+	github.com/pubgo/golug v0.0.19
 	github.com/pubgo/golugin v0.0.5
 	github.com/pubgo/x v0.3.19
 	github.com/pubgo/xerror v0.4.1
